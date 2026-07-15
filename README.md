@@ -41,6 +41,9 @@ The console prints how many transformer passes were skipped after each run.
   fixed seed; use `rel_l1_thresh=0.05` + `Start percent = 0.2` to stay close
   to the uncached result.
 
+- In reality, you'll probably end up using something like 'rel_l1_thresh=0.05' and Start percent = 0.2'. In this case, the speed will settle at around 1.4 to 1.5 times faster.
+  
+
 ## License and credits
 
 **AGPL-3.0** (required: the transformer forward in `anima_teacache_runtime.py`
