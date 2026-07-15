@@ -2,6 +2,8 @@
 
 TeaCache acceleration for the **Anima** model on **Forge Neo**.
 
+### I used Fable5 and GPT5.6Sol to create this. Thank you to both AI systems.
+
 Port of [ComfyUI-Anima-TeaCache](https://github.com/CocyNoric/ComfyUI-Anima-TeaCache)
 (cache-decision logic reused as-is; the model hook is reimplemented for Forge Neo's backend).
 
@@ -49,3 +51,5 @@ is derived from [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic)
   [CocyNoric/ComfyUI-Anima-TeaCache](https://github.com/CocyNoric/ComfyUI-Anima-TeaCache) (Apache-2.0).
 - TeaCache method: [ali-vilab/TeaCache](https://github.com/ali-vilab/TeaCache).
 - Anima model implementation lineage: NVIDIA Cosmos-Predict2 / ComfyUI / Forge Neo.
+
+
