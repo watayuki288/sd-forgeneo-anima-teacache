@@ -21,7 +21,7 @@ depending on threshold and step count.
 
 | Setting | Meaning |
 |---|---|
-| `rel_l1_thresh` | Higher = more skipping = faster, lower quality. Typical 0.05 - 0.20. `0` disables. |
+| `rel_l1_thresh` | Higher = more skipping = faster, lower quality. Typical 0.05 - 0.20. 0 disables. |
 | `Start/End percent` | Portion of the sampling run where caching is allowed. First and last steps are always fully computed. |
 | `Cache device` | `GPU` keeps caches in VRAM (fast). `CPU` offloads them to RAM. |
 
