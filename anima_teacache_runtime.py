@@ -54,14 +54,32 @@ class CacheDecision:
 
 
 class AnimaTeaCacheRuntime:
-    def __init__(self, rel_l1_thresh: float, start_percent: float, end_percent: float, cache_device: Optional[torch.device] = None):
+    def __init__(
+        self,
+        rel_l1_thresh: float,
+        start_percent: float,
+        end_percent: float,
+        cache_device: Optional[torch.device] = None,
+        start_sigma: Optional[float] = None,
+        end_sigma: Optional[float] = None,
+        debug: bool = False,
+    ):
         self.rel_l1_thresh = rel_l1_thresh
         self.start_percent = start_percent
         self.end_percent = end_percent
+        self.start_sigma = start_sigma
+        self.end_sigma = end_sigma
+        """Skipping is allowed while end_sigma <= sigma <= start_sigma. When either
+        bound (or the current sigma) is unavailable, falls back to the step-index
+        ratio against start_percent/end_percent."""
         self.cache_device = cache_device
+        self.debug = debug
+        self.log_records: list[dict] = []
+        self.debug_meta: dict = {}
         self.entries: dict[Any, CacheEntry] = {}
         self.step_info: Optional[tuple[int, int]] = None
         """(current denoiser call index, expected total denoiser calls) - fed per call by the on_cfg_denoiser callback"""
+        self.current_sigma: Optional[float] = None
         self.last_step_index: Optional[int] = None
         self.calls_total = 0
         self.calls_skipped = 0
@@ -70,11 +88,13 @@ class AnimaTeaCacheRuntime:
         self.entries.clear()
         self.last_step_index = None
 
-    def set_step(self, index: Optional[int], total: Optional[int]):
+    def set_step(self, index: Optional[int], total: Optional[int], sigma: Optional[float] = None):
         if index is None or not total:
             self.step_info = None
+            self.current_sigma = None
         else:
             self.step_info = (int(index), int(total))
+            self.current_sigma = float(sigma) if sigma is not None else None
 
     def _split_layout(self, tensor: torch.Tensor, transformer_options: dict):
         labels = transformer_options.get("cond_or_uncond")
@@ -107,11 +127,18 @@ class AnimaTeaCacheRuntime:
         self.last_step_index = step_index
 
         keys, slices = layout
-        percent = step_index / max(total_steps, 1)
-        in_range = self.start_percent <= percent <= self.end_percent
+        sigma = self.current_sigma
+        if self.start_sigma is not None and self.end_sigma is not None and sigma is not None:
+            in_range = self.end_sigma <= sigma <= self.start_sigma
+        else:
+            percent = step_index / max(total_steps, 1)
+            in_range = self.start_percent <= percent <= self.end_percent
         boundary = step_index == 0 or step_index >= total_steps - 1
         force_full = not in_range or boundary
 
+        warmup = False
+        threshold_hit = False
+        key_logs = []
         current_inputs = []
         for key, section in zip(keys, slices):
             current = modulated_input[section].detach()
@@ -128,9 +155,12 @@ class AnimaTeaCacheRuntime:
                 entry.signature = signature
                 force_full = True
 
+            relative_l1 = None
+            scaled = None
             previous = entry.previous_modulated_input
             if previous is None or entry.previous_residual is None:
                 force_full = True
+                warmup = True
             elif not force_full:
                 denominator = previous.abs().mean()
                 if not torch.isfinite(denominator) or denominator.item() <= 0.0:
@@ -140,10 +170,28 @@ class AnimaTeaCacheRuntime:
                     scaled = poly1d(ANIMA_COEFFICIENTS, relative_l1)
                     if not math.isfinite(scaled):
                         force_full = True
+                        scaled = None
                     else:
                         entry.accumulated_distance += scaled
                         if entry.accumulated_distance >= self.rel_l1_thresh:
                             force_full = True
+                            threshold_hit = True
+            elif self.debug:
+                # observation only (the decision is already "compute"); raw distances
+                # in the protected/boundary region are what sigma_start and thresh
+                # calibration needs
+                denominator = previous.abs().mean()
+                if torch.isfinite(denominator) and denominator.item() > 0.0:
+                    relative_l1 = ((current - previous).abs().mean() / denominator).float().item()
+                    scaled = poly1d(ANIMA_COEFFICIENTS, relative_l1)
+
+            if self.debug:
+                key_logs.append({
+                    "key": f"{key[0]}#{key[1]}" if isinstance(key, tuple) else str(key),
+                    "rel_l1": relative_l1,
+                    "poly": scaled,
+                    "accumulated": entry.accumulated_distance,
+                })
 
         for key, current in zip(keys, current_inputs):
             self.entries[key].previous_modulated_input = current
@@ -151,6 +199,20 @@ class AnimaTeaCacheRuntime:
         if force_full:
             for key in keys:
                 self.entries[key].accumulated_distance = 0.0
+
+        if self.debug:
+            self.log_records.append({
+                "call": self.calls_total,
+                "step": step_index,
+                "total_steps": total_steps,
+                "sigma": sigma,
+                "in_range": in_range,
+                "boundary": boundary,
+                "warmup": warmup,
+                "threshold_hit": threshold_hit,
+                "action": "compute" if force_full else "skip",
+                "keys": key_logs,
+            })
 
         return CacheDecision(force_full, True, keys, slices)
 
